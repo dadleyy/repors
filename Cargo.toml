@@ -1,0 +1,11 @@
+[package]
+name = "repors"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+quick-xml = { version = "~0.37" }
+env_logger = { version = "~0.11" }
+log = { version = "~0.4" }
+git2 = { version = "~0.19", features = ["vendored-openssl"] }
+clap = { version = "^4.5", features = ["derive"] }
