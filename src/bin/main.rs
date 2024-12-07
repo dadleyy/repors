@@ -41,23 +41,6 @@ struct CommandLine {
   subcommand: Subcommand,
 }
 
-/// During the execution subcommand, we will send instances of this types into background workers
-/// where they will perform their work.
-type Job = (
-  std::sync::mpsc::Sender<io::Result<(std::path::PathBuf, std::path::PathBuf)>>,
-  repors::Source,
-);
-
-/// Our threadpool is based on this type, which is used to communicate from the threads we spawn
-/// back up into the main thread.
-#[derive(Debug)]
-enum WorkerEvent {
-  /// We will immediately send this type when the thread starts executing.
-  Online(String, std::sync::mpsc::Sender<Job>),
-  /// This variant is send when a worker finishes a job.
-  Idle(String),
-}
-
 fn main() -> io::Result<()> {
   let _ = env_logger::try_init();
   let cli = CommandLine::parse();
@@ -72,9 +55,8 @@ fn main() -> io::Result<()> {
       log::debug!("attempting to do repo stuff against manifest '{manifest}'");
       let bytes = std::fs::read(&manifest)?;
       let cursor = std::io::Cursor::new(&bytes);
-      let mut manifest = repors::Manifest::from_reader(cursor)?;
+      let manifest = repors::Manifest::from_reader(cursor)?;
       log::debug!("manifest loaded - {manifest:?}");
-      let count = manifest.sources.len();
 
       let destination = destination
         .or(std::env::current_dir()?.to_str().map(str::to_string))
@@ -99,192 +81,9 @@ fn main() -> io::Result<()> {
       std::fs::create_dir_all(&destination)?;
 
       let destination_path = std::path::PathBuf::from(destination);
-      let mut temp_path = std::env::temp_dir();
-      temp_path.push(format!("repors-{}", uuid::Uuid::new_v4()));
-      let mut tree = repors::LayerTree::default();
 
-      let (loc_sender, loc_receiver) = std::sync::mpsc::channel();
-
-      std::thread::scope(|scope| {
-        let (job_result_sender, job_result_receiver) = std::sync::mpsc::channel();
-        let worker_count = threads;
-
-        for i in 0..worker_count {
-          let events = job_result_sender.clone();
-          let dp = destination_path.clone();
-          let tp = temp_path.clone();
-
-          scope.spawn(move || {
-            let id = uuid::Uuid::new_v4().to_string();
-            let (job_sender, job_receiver) = std::sync::mpsc::channel();
-
-            if let Err(error) = events.send(WorkerEvent::Online(id.clone(), job_sender)) {
-              log::error!("unable to notify worker pool of readiness - {error:?}");
-              return;
-            }
-
-            while let Ok((sender, source)) = job_receiver.recv() {
-              log::debug!("thread[{i}] doing job");
-
-              let mut source_path = dp.clone();
-              source_path.push(&source.destination);
-
-              let mut temp_dest = tp.clone();
-              temp_dest.push(uuid::Uuid::new_v4().to_string());
-
-              let origin = source.origin.clone();
-
-              if let Err(error) = std::fs::create_dir_all(&temp_dest) {
-                log::warn!("failed preparing temp dir - {error:?}");
-
-                if let Err(error) = sender.send(Err(error)) {
-                  log::warn!("worker failed to notify pool of error during execution - {error:?}");
-                }
-
-                return;
-              }
-
-              log::debug!("starting to clone '{source:?}' into '{temp_dest:?}'");
-
-              let mut builder = git2::build::RepoBuilder::new();
-
-              let clone_result = builder.clone(&origin, &temp_dest).map_err(|error| {
-                io::Error::new(
-                  io::ErrorKind::Other,
-                  format!("failed cloning '{source:?}': {error:?}"),
-                )
-              });
-
-              if let Err(error) = clone_result {
-                log::warn!("failed cloning - {error:?}");
-
-                if let Err(error) = sender.send(Err(error)) {
-                  log::warn!("worker failed to notify pool of error during execution - {error:?}");
-                }
-                return;
-              }
-
-              log::debug!("clone complete in '{temp_dest:?}'");
-              if let Err(error) = sender.send(Ok((source_path, temp_dest))) {
-                log::error!("unable to send job execution result - {error:?}, terminating worker");
-                break;
-              }
-
-              if let Err(error) = events.send(WorkerEvent::Idle(id.clone())) {
-                log::error!("unable to worker availability, terminating worker ({error:?})");
-                break;
-              }
-            }
-          });
-        }
-
-        let mut workers = std::collections::HashMap::new();
-        while workers.len() < worker_count {
-          match job_result_receiver.recv() {
-            Ok(WorkerEvent::Online(id, sender)) => {
-              log::debug!("worker '{id}' is now online");
-              workers.insert(id, sender);
-            }
-            Ok(_) => return Err(io::Error::new(io::ErrorKind::Other, "")),
-            Err(error) => {
-              return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("worker registration failed - {error:?}"),
-              ))
-            }
-          }
-        }
-
-        let mut jobs = manifest.sources.drain(0..);
-        let mut finished = Vec::default();
-
-        for (id, sender) in &workers {
-          let Some(job) = jobs.next() else {
-            log::debug!("not enough jobs for {worker_count} workers");
-            finished.push(id.clone());
-            continue;
-          };
-
-          log::debug!("sending clone job to worker '{id}'");
-          let results = loc_sender.clone();
-          let _ = sender.send((results, job));
-        }
-
-        loop {
-          if finished.len() == worker_count {
-            log::info!("all workers appear idle, exiting processing loop");
-            break;
-          }
-
-          match job_result_receiver.recv() {
-            Ok(WorkerEvent::Idle(id)) => {
-              log::info!("worker '{id}' appears idle, checking for jobs");
-              let Some(sender) = workers.get(&id) else {
-                continue;
-              };
-
-              let Some(next) = jobs.next() else {
-                log::info!("no jobs left for '{id}'");
-                finished.push(id);
-                continue;
-              };
-
-              log::info!("sending job to '{id}'");
-              let results = loc_sender.clone();
-              let _ = sender.send((results, next));
-            }
-            Ok(other) => {
-              log::warn!("strange message received on result receiver - {other:?}");
-            }
-            Err(error) => {
-              return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("failed receiving from worker threads - {error:?}"),
-              ));
-            }
-          }
-        }
-
-        drop(job_result_receiver);
-        drop(loc_sender);
-
-        let mut failed = false;
-
-        while let Ok(result) = loc_receiver.recv() {
-          match result {
-            Ok((src, temp)) => {
-              log::debug!("registering '{src:?}' (currently at '{temp:?}'");
-              tree.add(src, temp)
-            }
-            Err(error) => {
-              log::warn!("error while cloning - {error:?}");
-              failed = true;
-            }
-          }
-        }
-
-        if failed {
-          return Err(io::Error::new(
-            io::ErrorKind::Other,
-            "not all cloned completed successfully. check logs",
-          ));
-        }
-
-        let order = tree.consume();
-
-        if count != order.len() {
-          log::warn!("we did not clone as many sources as there were in the manifest");
-        }
-
-        log::debug!("received all results, attempting to place into final destinations");
-        for (destination, temp) in order {
-          log::debug!("moving '{temp:?}' to '{destination:?}'");
-          std::fs::create_dir_all(&destination)?;
-          std::fs::rename(&temp, &destination)?;
-        }
-
-        io::Result::Ok(())
-      })?;
+      let pool = repors::WorkerPool::create(threads, destination_path.clone())?;
+      pool.execute(manifest)?;
     }
   }
 
