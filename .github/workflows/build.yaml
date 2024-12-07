@@ -27,4 +27,14 @@ jobs:
           cargo build --release
       - name: test
         run: cargo test
-
+      - name: prepare dist
+        run: |
+          mkdir -p repors-$REPORS_VERSION
+          cp target/release/repors repors-$REPORS_VERSION/
+          cp LICENSE repors-$REPORS_VERSION/
+          tar cvzf repors-x86_64-unknown-linux-gnu-$REPORS_VERSION.tar.gz repors-$REPORS_VERSION
+      - name: release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: repors-*.tar.gz
