@@ -16,7 +16,7 @@ pub use execution::WorkerPool;
 
 #[cfg(test)]
 mod tests {
-  use super::{tree::Location, LayerTree};
+  use super::tree::{LayerTree, Location};
   use std::io;
 
   const FIXTURE: &[u8] = include_bytes!("../test/fixtures/default.xml");
@@ -257,7 +257,6 @@ mod tests {
   }
 
   #[test]
-  #[ignore]
   fn location_recognize() {
     let temp = std::path::PathBuf::from("");
     let mut loc = Location {
@@ -384,7 +383,6 @@ mod tests {
   }
 
   #[test]
-  #[ignore]
   fn location_ordering_roots() {
     let temp = std::path::PathBuf::from("");
     let mut tree = LayerTree::default();
@@ -403,7 +401,7 @@ mod tests {
 
   #[test]
   fn it_works() {
-    let mut cursor = io::Cursor::new(FIXTURE);
+    let cursor = io::Cursor::new(FIXTURE);
     let manifest = Manifest::from_reader(cursor);
     println!("{manifest:?}");
   }

@@ -30,9 +30,9 @@ enum Subcommand {
   },
 }
 
-/// The `repors` command line tool is meant to be a replacement of the `repo` command line tool
-/// used by google. This tool has less "bells and whistles" and is not intended to be used to
-/// manage some monorepo type project, but purely as a means to build openembedded projects.
+/// The `repors` command line tool is meant to be somewhat of a replacement to the `repo` command
+/// line tool used by google. This tool has less "bells and whistles" and is not intended to be
+/// used to manage some monorepo type project, but purely as a means to build openembedded projects.
 #[derive(Parser)]
 #[clap(version = option_env!("REPORS_VERSION").unwrap_or("dev"), verbatim_doc_comment, author)]
 struct CommandLine {
