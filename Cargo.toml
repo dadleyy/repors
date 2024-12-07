@@ -1,0 +1,17 @@
+[package]
+name = "repors"
+version = "0.0.2"
+edition = "2021"
+authors = ["Danny Hadley <dadleyy@gmail.com>"]
+
+[[bin]]
+name = "repors"
+path = "src/bin/main.rs"
+
+[dependencies]
+quick-xml = { version = "~0.37" }
+env_logger = { version = "~0.11" }
+log = { version = "~0.4" }
+git2 = { version = "~0.19", features = ["vendored-openssl"] }
+clap = { version = "^4.5", features = ["derive"] }
+uuid = { version = "^1.11", features = ["v4"] }
