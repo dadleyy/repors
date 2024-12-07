@@ -48,15 +48,26 @@ fn main() -> io::Result<()> {
   match cli.subcommand {
     Subcommand::Execute {
       threads,
-      manifest,
+      manifest: manifest_path,
       destination,
       overwrite,
     } => {
-      log::debug!("attempting to do repo stuff against manifest '{manifest}'");
-      let bytes = std::fs::read(&manifest)?;
+      log::debug!("attempting to do repo stuff against manifest '{manifest_path}'");
+      let bytes = std::fs::read(&manifest_path).map_err(|error| {
+        io::Error::new(
+          error.kind(),
+          format!("manifest file '{manifest_path}' could not be read - {error:?}"),
+        )
+      })?;
       let cursor = std::io::Cursor::new(&bytes);
-      let manifest = repors::Manifest::from_reader(cursor)?;
-      log::debug!("manifest loaded - {manifest:?}");
+      let manifest = repors::Manifest::from_reader(cursor)
+        .map_err(|error| io::Error::new(error.kind(), format!("failed parsing manifest - {error:?}")))?;
+      log::debug!("manifest loaded - '{manifest:?}'");
+
+      println!(
+        "successfully loaded manifest with {} source(s), preparing destination",
+        manifest.sources.len()
+      );
 
       let destination = destination
         .or(std::env::current_dir()?.to_str().map(str::to_string))
@@ -74,16 +85,26 @@ fn main() -> io::Result<()> {
           return Err(std::io::Error::new(std::io::ErrorKind::Other, message));
         }
         (true, Ok(_)) => {
-          std::fs::remove_dir_all(&destination)?;
+          println!("'{destination}' already exists, removing");
+          std::fs::remove_dir_all(&destination).map_err(|error| {
+            io::Error::new(
+              error.kind(),
+              format!("failed removing previous '{destination}': {error:?}"),
+            )
+          })?;
         }
       }
 
       std::fs::create_dir_all(&destination)?;
 
-      let destination_path = std::path::PathBuf::from(destination);
+      let destination_path = std::path::PathBuf::from(&destination);
 
+      println!("destination '{destination}' ready, creating worker pool...");
       let pool = repors::WorkerPool::create(threads, destination_path.clone())?;
+
+      println!("populating '{destination}' from '{manifest_path}', please wait...");
       pool.execute(manifest)?;
+      println!("success!");
     }
   }
 

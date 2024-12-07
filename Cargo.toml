@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Danny Hadley <dadleyy@gmail.com>"]
 
+[[bin]]
+name = "repors"
+path = "src/bin/main.rs"
+
 [dependencies]
 quick-xml = { version = "~0.37" }
 env_logger = { version = "~0.11" }
