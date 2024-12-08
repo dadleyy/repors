@@ -2,9 +2,14 @@ name: gh.build-and-test
 on: [push]
 jobs:
   ubuntu_latest_build:
-    runs-on: ubuntu:24.04
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:24.04
     permissions:
       contents: write
+    defaults:
+      run:
+        shell: bash -leo pipefail {0}
     steps:
       - uses: actions/checkout@v3
       - name: prepare-vars
@@ -12,7 +17,10 @@ jobs:
           echo "SHORT_SHA=$(echo $GITHUB_SHA | head -c 7)">>$GITHUB_OUTPUT
           echo "REPORS_VERSION=$(echo $GITHUB_SHA | head -c 7)">>$GITHUB_ENV
       - name: prepare dependencies
-        run: sudo apt install libclang-dev clang libopencv-dev cmake ninja-build -y
+        run: |
+          apt update
+          apt install libclang-dev clang libopencv-dev cmake ninja-build curl perl -y
+          curl https://sh.rustup.rs -sSf | sh -s -- -y
       - name: install-stable
         run: rustup toolchain install stable
       - name: use-stable
