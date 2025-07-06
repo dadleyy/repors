@@ -3,8 +3,10 @@ on: [push]
 jobs:
   ubuntu_latest_build:
     runs-on: ubuntu-latest
+    env:
+      DEBIAN_FRONTEND: noninteractive
     container:
-      image: ubuntu:24.04
+      image: debian:11
     permissions:
       contents: write
     defaults:
