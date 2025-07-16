@@ -85,7 +85,7 @@ impl WorkerPool {
             break;
           };
 
-          log::debug!("thread[{i}] doing job");
+          log::debug!("thread[{i}] assigned to '{}'", source.origin);
 
           let mut source_path = dp.clone();
           source_path.push(&source.destination);
@@ -105,15 +105,15 @@ impl WorkerPool {
             return;
           }
 
-          log::debug!("starting to clone '{source:?}' into '{temp_dest:?}'");
+          log::debug!("starting to clone '{}'", source.origin);
+          let start = std::time::Instant::now();
 
           let mut builder = git2::build::RepoBuilder::new();
-
           let clone_result = builder.clone(&origin, &temp_dest);
 
           let repo = match clone_result {
             Err(error) => {
-              log::warn!("failed cloning - {error:?}");
+              log::warn!("failed cloning '{}' - {error:?}", source.origin);
               let wrapped_err = io::Error::new(io::ErrorKind::Other, error.to_string());
 
               if let Err(error) = sender.send(Err(wrapped_err)) {
@@ -125,11 +125,14 @@ impl WorkerPool {
             Ok(repo) => repo,
           };
 
-          log::debug!("clone complete in '{temp_dest:?}'");
+          let duration = std::time::Instant::now().duration_since(start).as_millis();
+          log::debug!("'{}' clone complete ({duration}ms)", source.origin);
 
+          let start = std::time::Instant::now();
           let commit = match repo.find_commit_by_prefix(&source.revision) {
             Ok(c) => c,
             Err(error) => {
+              log::warn!("unable to find '{}' in '{}'", source.revision, source.origin);
               let wrapped_err = io::Error::new(io::ErrorKind::Other, error.to_string());
 
               if let Err(error) = sender.send(Err(wrapped_err)) {
@@ -174,7 +177,8 @@ impl WorkerPool {
             return;
           }
 
-          log::debug!("'{} checkout complete", source.origin);
+          let duration = std::time::Instant::now().duration_since(start).as_millis();
+          log::debug!("'{}' checkout complete ({duration}ms)", source.origin);
 
           if let Err(error) = sender.send(Ok((source_path, temp_dest))) {
             log::error!("unable to send job execution result - {error:?}, terminating worker");
@@ -305,7 +309,7 @@ impl WorkerPool {
 
     log::debug!("received all results, attempting to place into final destinations");
     for (destination, temp) in order {
-      log::debug!("moving '{temp:?}' to '{destination:?}'");
+      log::trace!("moving '{temp:?}' to '{destination:?}'");
       std::fs::create_dir_all(&destination)?;
       std::fs::rename(&temp, &destination)?;
     }
