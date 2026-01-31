@@ -59,7 +59,11 @@ impl WorkerPool {
 
     std::fs::create_dir_all(&destination)?;
 
-    let mut temp_path = std::env::temp_dir();
+    let mut temp_path = std::env::current_dir().map_err(|error| {
+      log::warn!("Unable to find current dir - {error:?}");
+      error
+    })?;
+    temp_path.push(".tmp-repors");
     temp_path.push(format!("repors-{}", uuid::Uuid::new_v4()));
 
     for i in 0..amount {
@@ -309,9 +313,15 @@ impl WorkerPool {
 
     log::debug!("received all results, attempting to place into final destinations");
     for (destination, temp) in order {
-      log::trace!("moving '{temp:?}' to '{destination:?}'");
-      std::fs::create_dir_all(&destination)?;
-      std::fs::rename(&temp, &destination)?;
+      log::debug!("moving '{temp:?}' to '{destination:?}'");
+      std::fs::create_dir_all(&destination).map_err(|error| {
+        log::warn!("Failed creating '{destination:?}'");
+        error
+      })?;
+      std::fs::rename(&temp, &destination).map_err(|error| {
+        log::warn!("Failed renaming '{temp:?}' -> '{destination:?}'");
+        error
+      })?;
     }
 
     for (id, handle) in self.workers.drain() {
