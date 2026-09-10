@@ -15,3 +15,4 @@ log = { version = "~0.4" }
 git2 = { version = "~0.19", features = ["vendored-openssl"] }
 clap = { version = "^4.5", features = ["derive"] }
 uuid = { version = "^1.11", features = ["v4"] }
+url = { version = "^2.5" }

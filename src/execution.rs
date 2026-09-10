@@ -109,6 +109,42 @@ impl WorkerPool {
 
           let mut builder = git2::build::RepoBuilder::new();
 
+          if source.origin_ref.ssh {
+            log::debug!(
+              "Adding git credential callbacks to clone operation for '{:?}'",
+              source.origin_ref
+            );
+            let mut fetch_options = git2::FetchOptions::default();
+            let mut callbacks = git2::RemoteCallbacks::new();
+            callbacks.credentials(|_, username, _| {
+              let Some(username) = username else {
+                log::warn!("Unable to resolve username while preparing git credentials");
+                return git2::Cred::default();
+              };
+
+              let Ok(home) = std::env::var("HOME") else {
+                log::warn!("Unable to resolve home dir while preparing git credentials");
+                return git2::Cred::default();
+              };
+
+              let mut key_path = std::path::PathBuf::from(format!("{}/.ssh/id_rsa", home));
+              log::debug!("Checking for key at '{key_path:?}'");
+              if !key_path.exists() {
+                key_path = std::path::PathBuf::from(format!("{}/.ssh/id_ed25519", home));
+                log::debug!("Not found, checking for key at '{key_path:?}'");
+              }
+
+              if !key_path.exists() {
+                log::warn!("Unable to find a valid key for git clone operations");
+                return git2::Cred::default();
+              }
+
+              return git2::Cred::ssh_key(username, None, &key_path, None);
+            });
+            fetch_options.remote_callbacks(callbacks);
+            builder.fetch_options(fetch_options);
+          }
+
           let clone_result = builder.clone(&origin, &temp_dest);
 
           let repo = match clone_result {

@@ -8,8 +8,37 @@ pub struct Source {
   pub revision: String,
   /// The url/remote information about this layer.
   pub origin: String,
+  #[allow(dead_code, missing_docs)]
+  pub origin_ref: std::sync::Arc<OriginReference>,
   /// Where, relative to our destination we should store the layer once cloned.
   pub destination: String,
+}
+
+#[derive(Debug)]
+pub struct OriginReference {
+  pub(crate) origin: String,
+  pub(crate) ssh: bool,
+}
+
+impl OriginReference {
+  fn resolve_repo(&self, name: &str) -> io::Result<String> {
+    if self.ssh {
+      let original = url::Url::parse(&self.origin)
+        .map_err(|error| io::Error::other(format!("unable to parse origin for ssh - {error}")))?;
+
+      let host_name = original
+        .host_str()
+        .ok_or_else(|| io::Error::other(format!("Missing host from {:?}", self.origin)))?;
+
+      let remote_path = original.path().trim_start_matches('/');
+
+      let mapped = format!("git@{host_name}:{remote_path}/{name}");
+
+      return Ok(mapped);
+    }
+
+    Ok(format!("{}/{name}", self.origin))
+  }
 }
 
 /// This type represents what we will deserialize _from_ the manifest xml file.
@@ -18,7 +47,7 @@ pub struct Manifest {
   #[allow(dead_code, clippy::missing_docs_in_private_items)]
   default_remote: Option<String>,
   #[allow(dead_code, clippy::missing_docs_in_private_items)]
-  remotes: std::collections::HashMap<String, String>,
+  remotes: std::collections::HashMap<String, std::sync::Arc<OriginReference>>,
   /// The parsed list of layers.
   pub sources: Vec<Source>,
 }
@@ -47,7 +76,7 @@ impl Manifest {
     let mut xml_reader = quick_xml::Reader::from_reader(reader);
     let mut buffer = Vec::default();
 
-    let mut remotes = std::collections::HashMap::default();
+    let mut remotes = std::collections::HashMap::<String, std::sync::Arc<OriginReference>>::new();
     let mut sources = Vec::default();
     let mut default_remote = None;
 
@@ -66,22 +95,25 @@ impl Manifest {
               let path = string_attr(&boundary, "path");
               let rev = string_attr(&boundary, "revision");
               let remote = string_attr(&boundary, "remote");
-              let fully_qualified_remote = remote
+
+              let (origin_ref, name) = remote
                 .as_ref()
                 .or(default_remote.as_ref())
                 .and_then(|value| remotes.get(value))
                 .zip(name)
-                .map(|(origin, name)| format!("{origin}/{name}"))
                 .ok_or_else(|| {
                   let error_message = format!("unable to find actual remote for '{boundary:?}'");
                   io::Error::new(io::ErrorKind::Other, error_message)
                 })?;
+
+              let fully_qualified_remote = origin_ref.resolve_repo(&name)?;
 
               if let Some((revision, destination)) = rev.zip(path) {
                 sources.push(Source {
                   revision,
                   destination,
                   origin: fully_qualified_remote,
+                  origin_ref: origin_ref.clone(),
                 });
               }
             }
@@ -91,8 +123,19 @@ impl Manifest {
             b"remote" => {
               let name = string_attr(&boundary, "name");
               let origin = string_attr(&boundary, "fetch");
+
+              let ssh = string_attr(&boundary, "ssh");
+
+              log::debug!("Remote '{origin:?}' ssh - {ssh:?}");
+
               if let Some((name, origin)) = name.zip(origin) {
-                remotes.insert(name, origin);
+                remotes.insert(
+                  name,
+                  std::sync::Arc::new(OriginReference {
+                    origin,
+                    ssh: ssh.map(|v| v == "true").unwrap_or(false),
+                  }),
+                );
               }
             }
             _ => (),
